@@ -20,7 +20,7 @@ import in.rakshit.gatekeeper.api_management_service.dto.requestDto.OrganizationS
 import in.rakshit.gatekeeper.api_management_service.dto.requestDto.TenantAdminRequest;
 import in.rakshit.gatekeeper.api_management_service.dto.responseDto.OrganizationResponse;
 import in.rakshit.gatekeeper.api_management_service.dto.responseDto.TenantAdminResponse;
-import in.rakshit.gatekeeper.api_management_service.service.OrganisationService;
+import in.rakshit.gatekeeper.api_management_service.service.OrganizationService;
 import in.rakshit.gatekeeper.api_management_service.service.OrganizationService;
 import jakarta.validation.Valid;
 
@@ -52,7 +52,7 @@ public class PlatformOrganizationController {
 
     @PutMapping("/{id}")
     public ResponseEntity<OrganizationResponse>  update(@PathVariable Long id,@Valid @RequestBody OrganizationRequest request){
-        return ResponseEntity.ok(organizationService.update(id,request);
+        return ResponseEntity.ok(organizationService.update(id,request));
 
     }
 

@@ -11,23 +11,25 @@ import in.rakshit.gatekeeper.api_management_service.entity.OrganizationStatus;
 import in.rakshit.gatekeeper.api_management_service.exception.ApiException;
 import in.rakshit.gatekeeper.api_management_service.repository.OrganizationRepository;
 
-@Component 
+@Component
 public class TenantContext {
+
     private final OrganizationRepository organizationRepository;
 
-     public TenantContext(OrganizationRepository organizationRepository) {
+    public TenantContext(OrganizationRepository organizationRepository) {
         this.organizationRepository = organizationRepository;
     }
 
+    public Organization getOrganization() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-    public Organization getOrganization(){
-        Authentication authentication= SecurityContextHolder.getContext().getAuthentication();
-
-        if(!(authentication instanceof JwtAuthenticationToken)){
-             throw new ApiException(HttpStatus.FORBIDDEN, "Tenant identity is missing");
+        if(!(authentication instanceof JwtAuthenticationToken)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Tenant identity is missing");
         }
 
-        Long organizationId=((JwtAuthenticationToken) authentication).getToken().getClaim("organizationId");
+        Long organizationId = ((JwtAuthenticationToken) authentication).getToken()
+                .getClaim("organizationId");
+
         if(organizationId == null) {
             throw new ApiException(HttpStatus.FORBIDDEN, "Tenant identity is missing");
         }
