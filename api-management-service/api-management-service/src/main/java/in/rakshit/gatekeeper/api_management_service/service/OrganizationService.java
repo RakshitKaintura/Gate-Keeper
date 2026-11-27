@@ -32,17 +32,20 @@ public class OrganizationService {
     private final PasswordEncoder passwordEncoder;
     private final TenantContext tenantContext;
     private final AuditService auditService;
+    private final GatewayConfigurationEventService configurationEventService;
 
     public OrganizationService(OrganizationRepository organizationRepository,
                                ManagementUserRepository managementUserRepository, RoleRepository roleRepository,
                                PasswordEncoder passwordEncoder, TenantContext tenantContext,
-                               AuditService auditService) {
+                               AuditService auditService,
+                               GatewayConfigurationEventService configurationEventService) {
         this.organizationRepository = organizationRepository;
         this.managementUserRepository = managementUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.tenantContext = tenantContext;
         this.auditService = auditService;
+        this.configurationEventService = configurationEventService;
     }
 
     @Transactional
@@ -59,6 +62,10 @@ public class OrganizationService {
         organization.setUpdatedAt(LocalDateTime.now());
 
         organizationRepository.save(organization);
+
+        auditService.record(organization, "CREATE_ORGANIZATION", "ORGANIZATION",
+                organization.getId().toString(), startedAt,
+                "Organization created in PENDING status");
 
         return OrganizationResponse.from(organization);
     }
@@ -83,12 +90,17 @@ public class OrganizationService {
     public OrganizationResponse update(Long id, OrganizationRequest request) {
         long startedAt = System.nanoTime();
         Organization organization = getOrganization(id);
-
         checkUnique(request.getName(), request.getSlug(), id);
-
         organization.setName(request.getName());
         organization.setSlug(request.getSlug());
         organization.setUpdatedAt(LocalDateTime.now());
+
+        auditService.record(organization, "UPDATE_ORGANIZATION",
+                "ORGANIZATION", id.toString(), startedAt,
+                "Organization name and slug updated");
+
+        configurationEventService.publish("ORGANIZATION_UPDATED",
+                organization.getId(), null, null);
 
         return OrganizationResponse.from(organization);
     }
@@ -100,12 +112,17 @@ public class OrganizationService {
         Organization organization = getOrganization(id);
 
         if(request.getStatus() == OrganizationStatus.DELETED) {
-            throw new ApiException(HttpStatus.BAD_REQUEST,
-                    "Use DELETE to soft-delete an organization");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Use DELETE to soft-delete an organization");
         }
 
         organization.setStatus(request.getStatus());
         organization.setUpdatedAt(LocalDateTime.now());
+        auditService.record(organization, "CHANGE_ORGANIZATION_STATUS",
+                "ORGANIZATION", id.toString(),
+                startedAt, "Status changed to " + request.getStatus());
+
+        configurationEventService.publish("ORGANIZATION_" + request.getStatus(),
+                organization.getId(), null, null);
 
         return OrganizationResponse.from(organization);
     }
@@ -118,9 +135,14 @@ public class OrganizationService {
         organization.setStatus(OrganizationStatus.DELETED);
         organization.setDeletedAt(LocalDateTime.now());
         organization.setUpdatedAt(LocalDateTime.now());
+
+        auditService.record(organization, "DELETE_ORGANIZATION",
+                "ORGANIZATION", id.toString(), startedAt,
+                "Organization soft-deleted");
+
+        configurationEventService.publish("ORGANIZATION_DELETED",
+                organization.getId(), null, null);
     }
-
-
 
     @Transactional
     public TenantAdminResponse createTenantAdmin(Long organizationId, TenantAdminRequest request) {
@@ -128,8 +150,7 @@ public class OrganizationService {
         Organization organization = getOrganization(organizationId);
 
         if(managementUserRepository.findByOrganizationId(organizationId).isPresent()) {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "This organization already has a tenant administrator");
+            throw new ApiException(HttpStatus.CONFLICT, "This organization already has a tenant administrator");
         }
 
         if(managementUserRepository.existsByUsername(request.getUsername())) {
@@ -149,6 +170,10 @@ public class OrganizationService {
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         managementUserRepository.save(user);
+
+        auditService.record(organization, "CREATE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(),
+                startedAt, "Tenant administrator created");
 
         return TenantAdminResponse.from(user);
     }
@@ -173,6 +198,10 @@ public class OrganizationService {
         user.setEnabled(request.isEnabled());
         user.setUpdatedAt(LocalDateTime.now());
 
+        auditService.record(user.getOrganization(), "UPDATE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(), startedAt,
+                "Tenant administrator updated");
+
         return TenantAdminResponse.from(user);
     }
 
@@ -182,42 +211,15 @@ public class OrganizationService {
 
         ManagementUser user = getTenantAdminEntity(organizationId);
 
+        auditService.record(user.getOrganization(), "DELETE_TENANT_ADMIN",
+                "MANAGEMENT_USER", user.getId().toString(), startedAt,
+                "Tenant administrator deleted");
+
         managementUserRepository.delete(user);
     }
 
-    private ManagementUser getTenantAdminEntity(Long organizationId) {
-        getOrganization(organizationId);
-        return managementUserRepository.findByOrganizationId(organizationId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Tenant administrator not found"));
-    }
-
-    private Organization getOrganization(Long id) {
-        return organizationRepository.findByIdAndStatusNot(id, OrganizationStatus.DELETED)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Organization not found"));
-    }
-
-    private void checkUnique(String name, String slug, Long currentId) {
-        if(organizationRepository.existsByNameIgnoreCase(name)) {
-            Organization current = currentId == null ?
-                    null : organizationRepository.findById(currentId).orElse(null);
-
-            if(current == null || !current.getName().equalsIgnoreCase(name)) {
-                throw new ApiException(HttpStatus.CONFLICT, "Organization name already exists");
-            }
-        }
-
-        if(organizationRepository.existsBySlugIgnoreCase(slug)) {
-            Organization current = currentId == null ?
-                    null : organizationRepository.findById(currentId).orElse(null);
-
-            if(current == null || !current.getSlug().equalsIgnoreCase(slug)) {
-                throw new ApiException(HttpStatus.CONFLICT, "Organization slug already exists");
-            }
-        }
-    }
-
     @Transactional(readOnly = true)
-    public OrganizationResponse getOwnOrganization(){
+    public OrganizationResponse getOwnOrganization() {
         return OrganizationResponse.from(tenantContext.getOrganization());
     }
 
@@ -242,4 +244,34 @@ public class OrganizationService {
         return OrganizationResponse.from(organization);
     }
 
+    private Organization getOrganization(Long id) {
+        return organizationRepository.findByIdAndStatusNot(id, OrganizationStatus.DELETED)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Organization not found"));
+    }
+
+    private ManagementUser getTenantAdminEntity(Long organizationId) {
+        getOrganization(organizationId);
+        return managementUserRepository.findByOrganizationId(organizationId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Tenant administrator not found"));
+    }
+
+    private void checkUnique(String name, String slug, Long currentId) {
+        if(organizationRepository.existsByNameIgnoreCase(name)) {
+            Organization current = currentId == null ?
+                    null : organizationRepository.findById(currentId).orElse(null);
+
+            if(current == null || !current.getName().equalsIgnoreCase(name)) {
+                throw new ApiException(HttpStatus.CONFLICT, "Organization name already exists");
+            }
+        }
+
+        if(organizationRepository.existsBySlugIgnoreCase(slug)) {
+            Organization current = currentId == null ?
+                    null : organizationRepository.findById(currentId).orElse(null);
+
+            if(current == null || !current.getSlug().equalsIgnoreCase(slug)) {
+                throw new ApiException(HttpStatus.CONFLICT, "Organization slug already exists");
+            }
+        }
+    }
 }
